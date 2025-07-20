@@ -11,6 +11,7 @@ from transformers import pipeline
 import torch
 from dotenv import load_dotenv
 import wikipedia
+import sqlite3
 
 from .memory import init_database, get_user_memory, update_user_memory, get_memory_summary
 from .personality import build_prompt, get_random_emoticon
@@ -42,17 +43,17 @@ def load_model():
             # Use 8-bit quantization if available for memory efficiency
             model_kwargs={"load_in_8bit": True} if torch.cuda.is_available() else {}
         )
-        print("✅ Mistral model loaded successfully!")
+        print("[OK] Mistral model loaded successfully!")
     except Exception as e:
-        print(f"❌ Error loading Mistral model: {e}")
-        print("💡 Falling back to a smaller model...")
+        print(f"[Error] Error loading Mistral model: {e}")
+        print("[Fallback] Falling back to a smaller model...")
         # Fallback to a smaller model if Mistral fails
         generator = pipeline("text-generation", model="microsoft/DialoGPT-medium")
 
 @bot.event
 async def on_ready():
-    print(f'🐉 {bot.user} (Sylvie) is online!')
-    print(f'📊 Connected to {len(bot.guilds)} servers')
+    print(f'[OK] {bot.user} (Sylvie) is online!')
+    print(f'[Info] Connected to {len(bot.guilds)} servers')
     
     # Load model after bot is ready
     if generator is None:
@@ -97,8 +98,12 @@ async def on_message(message):
                 if topic.strip():
                     wiki = wikipedia.summary(topic.strip(), sentences=2)
                     knowledge_answer = f"\nKnowledge: {wiki}"
-            except:
-                knowledge_answer = "\nKnowledge: I couldn't find reliable info on that topic right now."
+            except wikipedia.exceptions.PageError:
+                knowledge_answer = "\nKnowledge: I couldn't find a Wikipedia page for that topic."
+            except wikipedia.exceptions.DisambiguationError as e:
+                knowledge_answer = f"\nKnowledge: '{topic}' could mean multiple things. Try being more specific? (Options: {e.options[:3]})"
+            except Exception as e:
+                knowledge_answer = f"\nKnowledge: Something went wrong looking that up: {str(e)}"
         
         # Build the prompt
         full_prompt = build_prompt(
@@ -116,7 +121,7 @@ async def on_message(message):
         # Generate response with typing indicator
         async with message.channel.typing():
             if generator is None:
-                await message.reply("*flops sadly* My AI brain isn't loaded yet, give me a moment! (˶˃ ᵕ ˂˶)")
+                await message.reply("*flops sadly* My AI brain isn't loaded yet, give me a moment! (˶ᵔ ᵕ ˂˶)")
                 return
                 
             # Generate response
@@ -126,7 +131,7 @@ async def on_message(message):
                 do_sample=True,
                 temperature=float(os.getenv('TEMPERATURE', 0.9)),
                 top_p=0.9,
-                pad_token_id=generator.tokenizer.eos_token_id
+                pad_token_id=generator.tokenizer.eos_token_id if hasattr(generator.tokenizer, 'eos_token_id') else None
             )
             
             # Extract the response text
@@ -154,8 +159,8 @@ async def on_message(message):
             update_user_memory(user_id, user_name, message.content, response)
             
     except Exception as e:
-        print(f"Error processing message: {e}")
-        await message.reply("*tilts head confused* Something went wrong with my dragon brain! Try again? (˶˃ ᵕ ˂˶)")
+        print(f"[Error] Error processing message: {e}")
+        await message.reply("*tilts head confused* Something went wrong with my dragon brain! Try again? (˶ᵔ ᵕ ˂˶)")
 
 # Commands
 @bot.command(name='memory')
@@ -186,7 +191,7 @@ async def forget_user(ctx, user_mention=None):
     conn.commit()
     conn.close()
     
-    await ctx.send("*poof* Memory wiped clean! Like meeting for the first time~ (˶˃ ᵕ ˂˶)")
+    await ctx.send("*poof* Memory wiped clean! Like meeting for the first time~ (˶ᵔ ᵕ ˂˶)")
 
 @bot.command(name='stats')
 async def bot_stats(ctx):
@@ -199,7 +204,7 @@ async def bot_stats(ctx):
     
     users, total_interactions, avg_rapport = stats
     await ctx.send(f"""
-**Sylvie's Stats** 🐉
+**Sylvie's Stats** (∧,,,∧)
 - Users I remember: {users or 0}
 - Total conversations: {total_interactions or 0} 
 - Average rapport: {avg_rapport:.1f if avg_rapport else 0}/10
@@ -210,6 +215,6 @@ async def bot_stats(ctx):
 if __name__ == "__main__":
     token = os.getenv('DISCORD_TOKEN')
     if not token:
-        print("❌ No Discord token found! Add it to your .env file.")
+        print("[Error] No Discord token found! Add it to your .env file.")
     else:
         bot.run(token)
